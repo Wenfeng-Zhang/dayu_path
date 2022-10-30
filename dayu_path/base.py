@@ -28,7 +28,6 @@ if os.path.supports_unicode_filenames:
         BASE_STRING_TYPE = unicode  # Python 2 unicode.
 
 
-
 class DayuPath(BASE_STRING_TYPE):
     pathlib = os.path
 
@@ -171,7 +170,8 @@ class DayuPath(BASE_STRING_TYPE):
             compiled_regex = re.compile(regex_pattern)
             result = (f for f in result if compiled_regex.match(f))
         if ext_filters:
-            result = (f for f in result if f.ext.lower() in ext_filters)
+            result = (f for f in result if
+                      self.pathlib.isfile(self.child(f)) and DayuPath(f).ext.lower() in ext_filters)
         if not only_name:
             result = (self.child(f) for f in result)
 
@@ -511,7 +511,7 @@ class DayuPath(BASE_STRING_TYPE):
                     k.frames = v
                     k.missing = (sorted(set(range(v[0], v[-1] + 1)) - set(v))) if v else []
                     yield k
-                raise StopIteration
+                break
 
             if seq_list:
                 for k, v in seq_list.items():
@@ -520,7 +520,7 @@ class DayuPath(BASE_STRING_TYPE):
                     yield k
 
             if not recursive:
-                raise StopIteration
+                break
 
     def _show_in_win32(self, show_file=False):
         if show_file:
@@ -548,3 +548,74 @@ class DayuPath(BASE_STRING_TYPE):
         sub_func = getattr(self, '_show_in_{}'.format(sys.platform), None)
         if sub_func:
             sub_func(show_file=show_file)
+
+    def name_format(self):
+        """
+        一个标准化的文件名方法，会分出文件名、序列化符号、文件格式名字和绝对名字，这个可以很好的来比较两个复杂文件名是否是同一个文件
+        最后返回的一个namedtuple， 里面有 name， pattern， ext， absname， pattern_num方法
+        之所以有name还要增加一个absname，是因为name返回一个序列化符号之前的名字，而这个名字可能是后面带‘.’号，这是为了严谨的比较
+        例如 D:/a/b.%04d.exr和D:/a/b%04d.exr 并不是同一个文件序列，只是返回绝对的名字可能误以为是同一个序列。
+        还有一种情况是D:/a/b.%04d.exr和D:/a/b.%03d.exr，虽然得到的name和ext都一样，但是序列帧位数pattern_num却不一样，也不是一个序列，这都需要精确的比较
+        而纯文件名用absname，是去掉最后的‘.’号的，方便使用。
+        :return: namedtuple， 里面有 name， pattern， ext， absname， pattern_num方法方法
+        """
+        import re
+        import os
+        from collections import namedtuple
+        basename = os.path.basename(self)
+        num = len(basename.split('.'))
+        if num == 1:
+            return False
+        bgeo_sc = '.bgeo.sc'
+        pattern_regex = re.compile(r'(%\d*d|#+|<UDIM>|%\(UDIM\)d|\$F\d*|\d+)', re.IGNORECASE)
+        nameformat = namedtuple('nameformat', ['name', 'pattern', 'ext', 'absname', 'pattern_num'])
+        ext = os.path.splitext(basename)[-1][1:].lower()
+        if basename.endswith(bgeo_sc):
+            basename = basename.rsplit('.', 1)[0]
+            bgeo_format = self.name_format(basename)
+            return bgeo_format._replace(ext='bgeo.sc')
+        if ext in ['mp4', 'mov', 'avi']:
+            name = os.path.splitext(basename)[0]
+            pattern = ''
+        elif num > 2:
+            stem = os.path.splitext(basename)[0]
+            pattern_name = '.'.join(basename.split('.')[1:-1])
+            pattern_digit = '.'.join(basename.split('.')[-2:-1])
+            if pattern_digit.isdigit():
+                name = '.'.join(basename.split('.')[:-2]) + '.'
+                pattern = pattern_digit
+            elif pattern_regex.findall(pattern_name):
+                pattern = pattern_regex.findall(pattern_name)[-1]
+                name = stem.rsplit(pattern, 1)[0]
+            else:
+                name = stem
+                pattern = ''
+        else:
+            stem = os.path.splitext(basename)[0]
+            version_regex = re.compile(r'v\d+$', re.IGNORECASE)
+            if stem.isdigit() or version_regex.findall(stem):
+                name = stem
+                pattern = ''
+            elif pattern_regex.findall(stem):
+                pattern = pattern_regex.findall(stem)[-1]
+                if stem.endswith(pattern):
+                    name = stem.rsplit(pattern, 1)[0]
+                else:
+                    name_list = stem.rsplit(pattern, 1)
+                    name = name_list[0].rstrip('.').rstrip('_').rstrip('-') + '_' \
+                           + name_list[-1].lstrip('.').lstrip('_').lstrip('-')
+            else:
+                name = stem
+                pattern = ''
+        pattern_num = ''
+        if pattern:
+            p_regex = re.compile(r'\$F(\d*)|%(\d*)d', re.IGNORECASE)
+            if pattern in ['<udim>', '<UDIM>', '%(udim)d', '%(UDIM)d']:
+                pattern_num = 4
+            elif pattern[0] == '#' or pattern.isdigit():
+                pattern_num = len(pattern)
+            elif p_regex.search(pattern):
+                pattern_num = p_regex.search(pattern).group(1) or p_regex.search(pattern).group(2)
+                pattern_num = int(pattern_num) if pattern_num else ''
+        absname = name.rstrip('.')
+        return nameformat(name, pattern, ext, absname, pattern_num)
