@@ -2,6 +2,9 @@
 
 [![Build Status](https://travis-ci.org/phenom-films/dayu_path.svg?branch=master)](https://travis-ci.org/phenom-films/dayu_path)
 
+增加新功能，name_format，匹配python3
+
+
 针对影视行业的文件路径处理类。比起传统的os.path 有着下面的优点：
 
 * 将文件路径作为对象处理
